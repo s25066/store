@@ -5,7 +5,7 @@ import plotly.express as px
 
 # 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="국가별 대표 관광지 & 인근 명소 카페 지도",
+    page_title="국가별 대표 관광지 & 추천 카페 지도",
     page_icon="🗺️",
     layout="wide"
 )
@@ -323,10 +323,11 @@ st.markdown("---")
 if filtered_df.empty:
     st.info("조건에 맞는 장소가 없습니다. 사이드바의 옵션이나 검색어를 변경해 보세요.")
 else:
+    # 국내외 구분 없이 상권업종소분류명 기반 고정 색상 매핑
     color_map = {
-        "편의점": "#1f77b4",     # 파란색
-        "카페": "#ff7f0e",        # 주황색
-        "세계 관광지": "#ffd700"  # 황금색
+        "편의점": "#1f77b4",     # 파란색 (🏪 국내 편의점)
+        "카페": "#ff7f0e",        # 주황색 (☕ 국내외 모든 카페)
+        "세계 관광지": "#ffd700"  # 황금색 (⭐ 세계 유명 관광지)
     }
 
     if use_radius_search and selected_store_name:
