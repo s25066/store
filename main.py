@@ -5,7 +5,7 @@ import plotly.express as px
 
 # 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="편의점 & 카페 지도 시각화",
+    page_title="동별 편의점 & 카페 지도 시각화",
     page_icon="📍",
     layout="wide"
 )
@@ -31,7 +31,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 
 # -----------------------------------------------------------------------------
-# [데이터 로드 및 전처리] CSV 파일 자동 로드 및 필터링
+# [데이터 로드 및 전처리] CSV 파일 로드 및 동 컬럼 자동 추출
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_data():
@@ -45,37 +45,37 @@ def load_data():
             st.error("데이터 파일('store.csv' 또는 'store_filtered.csv')을 찾을 수 없습니다.")
             return None
 
-    # 필수 컬럼 체크 (동 이름의 경우 행정동명/법정동명 중 하나 사용)
-    required_cols = ["상호명", "위도", "경도", "상권업종소분류명", "시도명"]
+    # 필수 컬럼 검증
+    required_cols = ["상호명", "위도", "경도", "상권업종소분류명"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         st.error(f"데이터에 필수 열이 없습니다: {missing_cols}")
         return None
 
-    # '동'을 구분할 컬럼 확인 (행정동명 우선, 없으면 법정동명 사용)
+    # '동' 구분 컬럼 자동 탐색 ('행정동명' 우선, 없으면 '법정동명')
     dong_col = None
     if "행정동명" in df.columns:
         dong_col = "행정동명"
     elif "법정동명" in df.columns:
         dong_col = "법정동명"
     
-    # 1) 위도, 경도 숫자형 변환 및 결측치 제거
+    # 1) 위도/경도 결측치 및 숫자가 아닌 데이터 제거
     df["위도"] = pd.to_numeric(df["위도"], errors="coerce")
     df["경도"] = pd.to_numeric(df["경도"], errors="coerce")
     df = df.dropna(subset=["위도", "경도"]).copy()
 
-    # 2) 편의점, 카페 업종만 필터링
+    # 2) 편의점, 카페 업종만 추출
     df = df[df["상권업종소분류명"].isin(["편의점", "카페"])].copy()
 
-    # 동 컬럼명을 '동명'으로 통일하여 정리
+    # 3) 동 컬럼명을 '동명'으로 통일
     if dong_col:
-        df["동명"] = df[dong_col]
+        df["동명"] = df[dong_col].fillna("미분류")
     else:
         df["동명"] = "전체"
 
     return df
 
-# 데이터 불러오기
+# 데이터 로드
 df = load_data()
 
 if df is None or df.empty:
@@ -84,31 +84,19 @@ if df is None or df.empty:
 
 
 # -----------------------------------------------------------------------------
-# [사이드바 설정] 시/도 -> 시군구 -> 동 단계별 필터링
+# [사이드바 설정] 동별 필터링
 # -----------------------------------------------------------------------------
-st.sidebar.header("🔍 지역 선택")
+st.sidebar.header("🏘️ 동 선택")
 
-# 1) 시/도 선택
-sido_list = sorted(df["시도명"].dropna().unique().tolist())
-selected_sido = st.sidebar.selectbox("시/도 선택", sido_list)
+# 전체 동 목록 추출 및 선택 옵션 생성
+all_dongs = ["전체"] + sorted(df["동명"].unique().tolist())
+selected_dong = st.sidebar.selectbox("검색할 동을 선택하세요", all_dongs)
 
-filtered_df = df[df["시도명"] == selected_sido].copy()
-
-# 2) 시군구 선택 (데이터에 시군구명이 있는 경우)
-selected_sigungu = "전체"
-if "시군구명" in filtered_df.columns:
-    sigungu_list = ["전체"] + sorted(filtered_df["시군구명"].dropna().unique().tolist())
-    selected_sigungu = st.sidebar.selectbox("시/군/구 선택", sigungu_list)
-    if selected_sigungu != "전체":
-        filtered_df = filtered_df[filtered_df["시군구명"] == selected_sigungu].copy()
-
-# 3) 동 선택 (행정동 또는 법정동)
-selected_dong = "전체"
-if "동명" in filtered_df.columns and filtered_df["동명"].nunique() > 1:
-    dong_list = ["전체"] + sorted(filtered_df["동명"].dropna().unique().tolist())
-    selected_dong = st.sidebar.selectbox("읍/면/동 선택", dong_list)
-    if selected_dong != "전체":
-        filtered_df = filtered_df[filtered_df["동명"] == selected_dong].copy()
+# 동 단위 데이터 필터링
+if selected_dong != "전체":
+    filtered_df = df[df["동명"] == selected_dong].copy()
+else:
+    filtered_df = df.copy()
 
 
 # -----------------------------------------------------------------------------
@@ -123,8 +111,9 @@ radius_km = 1.0
 
 if use_radius_search:
     if filtered_df.empty:
-        st.sidebar.warning("선택한 지역 조건에 매장이 없어 반경 검색을 할 수 없습니다.")
+        st.sidebar.warning("선택한 동에 매장이 없어 반경 검색을 할 수 없습니다.")
     else:
+        # 드롭다운에서 매장 선택
         store_options = filtered_df["상호명"].tolist()
         selected_store_idx = st.sidebar.selectbox(
             "기준 매장 선택", 
@@ -134,12 +123,13 @@ if use_radius_search:
         
         radius_km = st.sidebar.slider("검색 반경 (km)", min_value=0.5, max_value=10.0, value=2.0, step=0.5)
 
+        # 기준 매장 좌표 추출
         target_store = filtered_df.iloc[selected_store_idx]
         target_lat = target_store["위도"]
         target_lon = target_store["경도"]
         selected_store_name = target_store["상호명"]
 
-        # 하버사인 거리 계산 후 필터링
+        # 하버사인 공식으로 거리를 계산 후 조건에 맞는 매장만 추출
         filtered_df["거리"] = haversine_distance(
             target_lat, target_lon, filtered_df["위도"], filtered_df["경도"]
         )
@@ -147,23 +137,18 @@ if use_radius_search:
 
 
 # -----------------------------------------------------------------------------
-# [메인 화면] 타이틀 및 지표 카드(st.metric)
+# [메인 화면] 지표(st.metric) 및 상단 서두
 # -----------------------------------------------------------------------------
-st.title("📍 편의점 & 카페 지도 시각화")
-
-# 지역 표시 문자열 생성
-location_label = f"{selected_sido}"
-if selected_sigungu != "전체":
-    location_label += f" {selected_sigungu}"
-if selected_dong != "전체":
-    location_label += f" {selected_dong}"
+st.title("📍 동별 편의점 & 카페 지도 시각화")
 
 if use_radius_search and selected_store_name:
     st.subheader(f"📌 기준 매장: **[{selected_store_name}]** 반경 **{radius_km} km** 이내")
+elif selected_dong != "전체":
+    st.subheader(f"🏘️ **{selected_dong}** 매장 현황")
 else:
-    st.subheader(f"🌆 **{location_label}** 매장 현황")
+    st.subheader("🏘️ **전체 동** 매장 현황")
 
-# 지표 계산
+# 매장 수 지표 계산
 conv_count = len(filtered_df[filtered_df["상권업종소분류명"] == "편의점"])
 cafe_count = len(filtered_df[filtered_df["상권업종소분류명"] == "카페"])
 total_count = len(filtered_df)
@@ -180,14 +165,14 @@ st.markdown("---")
 # [지도 시각화] Plotly 렌더링
 # -----------------------------------------------------------------------------
 if filtered_df.empty:
-    st.info("조건에 맞는 매장이 없습니다. 사이드바에서 선택 범위를 조정해 주세요.")
+    st.info("조건에 맞는 매장이 없습니다. 다른 동을 선택하거나 검색 반경을 넓혀주세요.")
 else:
     color_map = {
-        "편의점": "#1f77b4",  # Blue
-        "카페": "#ff7f0e"     # Orange
+        "편의점": "#1f77b4",  # 파란색
+        "카페": "#ff7f0e"     # 주황색
     }
 
-    # 줌 레벨 조정 (동 단위로 선택했거나 반경 검색 시 더 크게 확대)
+    # 지도 줌 레벨 및 중심 위치 설정
     if use_radius_search and selected_store_name:
         center_lat = target_lat
         center_lon = target_lon
@@ -195,11 +180,11 @@ else:
     elif selected_dong != "전체":
         center_lat = filtered_df["위도"].mean()
         center_lon = filtered_df["경도"].mean()
-        zoom_level = 13  # 동 단위 선택 시 지도 확대
+        zoom_level = 14  # 특정 동 선택 시 적절한 확대 수준
     else:
         center_lat = filtered_df["위도"].mean()
         center_lon = filtered_df["경도"].mean()
-        zoom_level = 10 if selected_sigungu == "전체" else 12
+        zoom_level = 11
 
     map_kwargs = {
         "data_frame": filtered_df,
@@ -214,6 +199,7 @@ else:
         "height": 650
     }
 
+    # Plotly 버전 호환 처리 (scatter_map vs scatter_mapbox)
     if hasattr(px, "scatter_map"):
         fig = px.scatter_map(**map_kwargs, map_style="open-street-map")
     else:
